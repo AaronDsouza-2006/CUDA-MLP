@@ -19,6 +19,7 @@ public:
 
     float cross_entropy(float* probs, int label);
     float cross_entropy_batch(float* probs, int* labels);
+    void backward(float *x, float *probs, int * labels);
 
 private:
         int input, hidden, output; //sizes
@@ -26,6 +27,7 @@ private:
         float *W1, *W2; //weights
         float *b1, *b2; //biases
         float *h_pre, *h, *logits;
+        float lr = 0.05;
 
         //for prefetch
         int device;

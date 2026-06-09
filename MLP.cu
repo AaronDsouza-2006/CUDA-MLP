@@ -11,6 +11,17 @@ void bc_add(float* mat, float* vec, int rows, int cols);
 __global__
 void relu(float* x, int n, float* y);
 
+__global__
+void scale(float* x, int n, float value);
+
+__global__
+void add(int n, float *x, float *y);
+
+__global__
+void relu_deriv(float* x, float* dx, int n, float *y);
+
+__global__
+void sum_batch(float* x, int rows, int cols, float *y);
 
 MLP::MLP(int input_size, int hidden_size, int output_size, int input_batch_size){
     input = input_size;
@@ -27,6 +38,14 @@ MLP::MLP(int input_size, int hidden_size, int output_size, int input_batch_size)
     cudaMallocManaged(&h, hidden*batch_size*sizeof(float));
     cudaMallocManaged(&logits, output*batch_size*sizeof(float));
 
+    cudaMallocManaged(&dW1, hidden*input*sizeof(float));
+    cudaMallocManaged(&db1, hidden*sizeof(float));
+    cudaMallocManaged(&dW2, output*hidden*sizeof(float));
+    cudaMallocManaged(&db2, output*sizeof(float));
+    cudaMallocManaged(&dh_pre, hidden*batch_size*sizeof(float));
+    cudaMallocManaged(&dh, hidden*batch_size*sizeof(float));
+    cudaMallocManaged(&dlogits, output*batch_size*sizeof(float));
+
     initializeWeights();
 
     cudaGetDevice(&device);
@@ -41,6 +60,14 @@ MLP::MLP(int input_size, int hidden_size, int output_size, int input_batch_size)
     cudaMemPrefetchAsync(h_pre, hidden*batch_size*sizeof(float), location, 0, 0);
     cudaMemPrefetchAsync(h, hidden*batch_size*sizeof(float), location, 0, 0);
     cudaMemPrefetchAsync(logits, output*batch_size*sizeof(float), location, 0, 0);
+    
+    cudaMemPrefetchAsync(dW1, hidden*input*sizeof(float), location, 0, 0);
+    cudaMemPrefetchAsync(db1, hidden*sizeof(float), location, 0, 0);
+    cudaMemPrefetchAsync(dW2, output*hidden*sizeof(float), location, 0, 0);
+    cudaMemPrefetchAsync(db2, output*sizeof(float), location, 0, 0);
+    cudaMemPrefetchAsync(dh_pre, hidden*batch_size*sizeof(float), location, 0, 0);
+    cudaMemPrefetchAsync(dh, hidden*batch_size*sizeof(float), location, 0, 0);
+    cudaMemPrefetchAsync(dlogits, output*batch_size*sizeof(float), location, 0, 0);
 }
 
 MLP::~MLP(){
@@ -51,6 +78,13 @@ MLP::~MLP(){
     cudaFree(h_pre);
     cudaFree(h);
     cudaFree(logits);
+    cudaFree(dlogits);
+    cudaFree(dW2);
+    cudaFree(db2);
+    cudaFree(dh);
+    cudaFree(dh_pre);
+    cudaFree(dW1);
+    cudaFree(db1);
 }
 
 void MLP::forward(float *x){
@@ -88,6 +122,92 @@ void MLP::forward(float *x){
 
 float* MLP::get_logits(){
     return logits;
+}
+
+void MLP::backward(float *x, float *probs, int * labels){
+
+    dim3 BlockSize_2d(16, 16);
+    int BlockSize_lin = 256;
+
+    //compute dlogits
+    int NumBlocks0 =(output*batch_size + BlockSize_lin -1)/ BlockSize_lin;
+
+    compute_dlogits<<<NumBlocks0, BlockSize_lin>>>
+        (output, batch_size, probs, labels, dlogits);
+
+    //compute dW2
+    dim3 NumBlocks1((hidden + BlockSize_2d.x -1)/BlockSize_2d.x, 
+                    (output + BlockSize_2d.y -1)/BlockSize_2d.y);
+    matmul_transpose_right<<<NumBlocks1, BlockSize_2d>>>
+        (output, batch_size, hidden, batch_size, dlogits, h, dW2);
+    cudaDeviceSynchronize();
+    
+    //compute db2
+    sum_batch<<<(output + BlockSize_lin -1)/BlockSize_lin,BlockSize_lin>>>
+        (dlogits, output, batch_size, db);
+
+    //compute dh
+    dim3 NumBlocks2((batch_size + BlockSize_2d.x -1)/BlockSize_2d.x, 
+                    (hidden + BlockSize_2d.y -1)/BlockSize_2d.y);
+    matmul_transpose_left<<<NumBlocks2, BlockSize_2d>>>
+        (output, hidden, output, batch_size, W2, dlogits, dh);
+    cudaDeviceSynchronize();
+
+    //compute dh_pre
+
+    int NumBlocks3 = (hidden*batch_size + BlockSize_lin -1)/BlockSize_lin;
+    relu_deriv<<<NumBlocks3, BlockSize_lin>>>
+        (h_pre, dh_pre, hidden*batch_size, dh);
+    cudaDeviceSynchronize();
+
+    //compute dW1
+    dim3 NumBlocks4((input + BlockSize_2d.x -1)/BlockSize_2d.x, 
+                    (hidden + BlockSize_2d.y -1)/BlockSize_2d.y);
+    matmul_transpose_right<<<NumBlocks4, BlockSize_2d>>>
+        (hidden, batch_size, input, batch_size, dh_pre, x, dW1);
+    cudaDeviceSynchronize();
+
+    //compute db1
+    sum_batch<<<(hidden + BlockSize_lin -1)/BlockSize_lin,BlockSize_lin>>>
+        (dh_pre, hidden, batch_size, db1);
+
+    //batch averaging and multiply with learning rate
+    scale<<<(hidden*input + BlockSize_lin -1)/BlockSize_lin, BlockSize_lin>>>
+    (dW1, hidden*input, -1.0f/batch_size*lr);
+    cudaDeviceSynchronize();
+
+    scale<<<(hidden + BlockSize_lin -1)/BlockSize_lin, BlockSize_lin>>>
+        (db1, hidden, -1.0f/batch_size*lr);
+    cudaDeviceSynchronize();
+
+    scale<<<(output*hidden + BlockSize_lin -1)/BlockSize_lin, BlockSize_lin>>>
+        (dW2, output*hidden, -1.0f/batch_size*lr);
+    cudaDeviceSynchronize();
+
+    scale<<<(output + BlockSize_lin -1)/BlockSize_lin, BlockSize_lin>>>
+        (db2, output, -1.0f/batch_size*lr);
+    cudaDeviceSynchronize();
+
+    //Mini-Batch GD
+    // W1[i] -= lr*dW1[i];
+    // W2[i] -= lr*dW2[i];
+    // b1[i] -= lr*db1[i];
+    // b2[i] -= lr*db2[i];
+    add<<<(hidden*input + BlockSize_lin -1)/BlockSize_lin, BlockSize_lin>>>
+        (W1, hidden*input, dW1);
+    cudaDeviceSynchronize();
+    
+    add<<<(hidden + BlockSize_lin -1)/BlockSize_lin, BlockSize_lin>>>
+        (b1, hidden, db1);
+    cudaDeviceSynchronize();
+
+    add<<<(output*hidden + BlockSize_lin -1)/BlockSize_lin, BlockSize_lin>>>
+        (W2, output*hidden, dW2);
+    cudaDeviceSynchronize();
+    
+    add<<<(output + BlockSize_lin -1)/BlockSize_lin, BlockSize_lin>>>
+        (b2, output, db2);
+    cudaDeviceSynchronize();
 }
 
 //kept cpu functions as speed increase is negligible
@@ -172,6 +292,18 @@ void MLP::initializeWeights(){
 }
 
 __global__
+void sum_batch(float* x, int rows, int cols, float *y){
+    int row = blockIdx.x * blockDim.x + threadIdx.x;
+
+    if(row < rows){
+        float sum = 0.0f;
+        for(int b=0; b < cols; b++)
+            sum+=x[row*cols + b];
+        y[row] = sum;
+    }
+}
+
+__global__
 void bc_add(float* mat, float* vec, int rows, int cols){
     int idx = blockIdx.x * blockDim.x + threadIdx.x;
     if(idx < rows*cols) mat[idx] += vec[idx / cols];
@@ -181,4 +313,33 @@ __global__
 void relu(float* x, int n, float *y){
     int idx = blockIdx.x * blockDim.x + threadIdx.x;
     if(idx < n) y[idx] = (x[idx] < 0) ? 0.0f : x[idx];
+}
+
+__global__
+void scale(float* x, int n, float value){
+    int idx = blockIdx.x * blockDim.x + threadIdx.x;
+    if(idx < n) x[idx] *= value;
+}
+
+__global__
+void add(float *x, int n, float *y){
+    int idx = blockIdx.x * blockDim.x + threadIdx.x;
+    if(idx < n) x[idx] = x[idx] + y[idx];
+}
+
+__global__
+void relu_deriv(float* x, float* dx, int n, float *y){
+    int idx = blockIdx.x * blockDim.x + threadIdx.x;
+    if(idx < n) dx[idx] = (x[idx] <= 0.0f) ? 0.0f : y[idx];
+}
+
+__global__
+void compute_dlogits(int output, int batch_size, float *probs, 
+                    int *labels, float *dlogits){
+
+    int idx = blockIdx.x * blockDim.x + threadIdx.x;
+    if(idx < output*batch_size) dlogits[idx] = probs[idx];
+
+    if(idx < batch_size)
+        dlogits[labels[idx]*batch_size + idx] -= 1.0f;
 }

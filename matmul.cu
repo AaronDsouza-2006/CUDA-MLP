@@ -24,10 +24,70 @@ void matmul(int A, int B, int M, int N, float *x, float *y, float *z){
         __syncthreads();
 
         //COMPUTE
-        for(int i=0; i<TILE_SIZE; i++) sum+= x_tile[ty][i] * y_tile[i][tx];
+        for(int i=0; i<TILE_SIZE; i++) 
+            sum+= x_tile[ty][i] * y_tile[i][tx];
 
         //SYNC
         __syncthreads();
     }
     if(row<A && col < N) z[row*N + col] = sum;
+}
+
+__global__
+void matmul_transpose_right(int A, int B, int M, int N, float *x, float *y, float *z){
+
+    __shared__ float x_tile[TILE_SIZE][TILE_SIZE], y_tile[TILE_SIZE][TILE_SIZE];
+
+    int tx=threadIdx.x, ty=threadIdx.y;
+    int row=blockIdx.y*blockDim.y + ty;
+    int col=blockIdx.x*blockDim.x + tx;
+    float sum=0.0f;
+
+    for(int phase=0; phase<(B+TILE_SIZE-1)/TILE_SIZE; phase++){
+
+        x_tile[ty][tx]=(row<A && phase*TILE_SIZE+tx<B) ?
+                        x[row*B + phase*TILE_SIZE+tx] : 0.0f;
+
+        y_tile[ty][tx]=(col<M && phase*TILE_SIZE+ty<N) ?
+                        y[col*N + phase*TILE_SIZE+ty] : 0.0f;
+
+        __syncthreads();
+
+        for(int i=0; i<TILE_SIZE; i++)
+            sum += x_tile[ty][i] * y_tile[i][tx];
+
+        __syncthreads();
+    }
+
+    if(row<A && col<M) z[row*M + col] = sum;
+}
+
+__global__
+void matmul_transpose_left(int A, int B, int M, int N, float *x, float *y, float *z){
+
+    __shared__ float x_tile[TILE_SIZE][TILE_SIZE], y_tile[TILE_SIZE][TILE_SIZE];
+    
+    int tx = threadIdx.x, ty=threadIdx.y;
+    int row = blockIdx.y * blockDim.y + ty;
+    int col = blockIdx.x * blockDim.x + tx;
+    float sum=0.0f;
+
+    for(int phase=0; phase < (B+TILE_SIZE - 1)/TILE_SIZE; phase++){
+        //LOAD
+        x_tile[ty][tx] = (row < B && phase * TILE_SIZE + tx < A) ?
+                            x[(phase * TILE_SIZE + tx)*B + row] : 0.0f;
+        y_tile[ty][tx] = (phase * TILE_SIZE + ty < M && col < N) ?
+                            y[(phase * TILE_SIZE + ty)*N + col] : 0.0f;
+        
+        //SYNC
+        __syncthreads();
+
+        //COMPUTE
+        for(int i=0; i<TILE_SIZE; i++) 
+            sum+= x_tile[ty][i] * y_tile[i][tx];
+
+        //SYNC
+        __syncthreads();
+    }
+    if(row<B && col < N) z[row*N + col] = sum;
 }
