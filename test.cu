@@ -14,9 +14,9 @@ int main()
         << train.num_samples
         << " samples\n";
 
-    const int batch_size = 64;
+    const int batch_size = 512;
 
-    MLP model(
+    MLP mlp(
         784,
         128,
         10,
@@ -76,15 +76,17 @@ int main()
     // Forward pass timing
     //--------------------------------------------------
 
-    for(int epoch=0; epoch< 1000; epoch++){
+    float *probs;
+    float loss;
+    for(int epoch=0; epoch< 2000; epoch++){
         mlp.forward(x);
-        float *probs = mlp.softmax_batch(mlp.get_logits());
-        float loss = mlp.cross_entropy_batch(probs, labels);
+        probs = mlp.softmax_batch(mlp.get_logits());
+        loss = mlp.cross_entropy_batch(probs, labels);
         if(epoch % 20 == 0)
             std::cout<< "Epoch "<< epoch << 
                 " Loss: "<< loss<< std::endl;
         mlp.backward(x, probs, labels);
-        free(probs);
+        cudaFree(probs);
     }
 
     int correct = 0;
@@ -104,7 +106,7 @@ int main()
     }
 
     std::cout<< " Loss: " << loss
-    << " Acc: " << correct/batch_size
+    << " Acc: " << 100.0f* correct/batch_size
     << std::endl;
 
     cudaFree(x);

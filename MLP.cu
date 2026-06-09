@@ -4,6 +4,9 @@
 #include <random>
 #include <cstdlib>
 #include <cmath>
+#include <vector>
+#include <algorithm>
+#include <random>
 
 __global__
 void bc_add(float* mat, float* vec, int rows, int cols);
@@ -15,13 +18,17 @@ __global__
 void scale(float* x, int n, float value);
 
 __global__
-void add(int n, float *x, float *y);
+void add(float *x, int n, float *y);
 
 __global__
 void relu_deriv(float* x, float* dx, int n, float *y);
 
 __global__
 void sum_batch(float* x, int rows, int cols, float *y);
+
+__global__
+void compute_dlogits(int output, int batch_size, float *probs, 
+                    int *labels, float *dlogits);
 
 MLP::MLP(int input_size, int hidden_size, int output_size, int input_batch_size){
     input = input_size;
@@ -124,7 +131,7 @@ float* MLP::get_logits(){
     return logits;
 }
 
-void MLP::backward(float *x, float *probs, int * labels){
+void MLP::backward(float *x, float *probs, int * labels, float lr){
 
     dim3 BlockSize_2d(16, 16);
     int BlockSize_lin = 256;
@@ -134,7 +141,7 @@ void MLP::backward(float *x, float *probs, int * labels){
 
     compute_dlogits<<<NumBlocks0, BlockSize_lin>>>
         (output, batch_size, probs, labels, dlogits);
-
+    cudaDeviceSynchronize();
     //compute dW2
     dim3 NumBlocks1((hidden + BlockSize_2d.x -1)/BlockSize_2d.x, 
                     (output + BlockSize_2d.y -1)/BlockSize_2d.y);
@@ -144,7 +151,8 @@ void MLP::backward(float *x, float *probs, int * labels){
     
     //compute db2
     sum_batch<<<(output + BlockSize_lin -1)/BlockSize_lin,BlockSize_lin>>>
-        (dlogits, output, batch_size, db);
+        (dlogits, output, batch_size, db2);
+    cudaDeviceSynchronize();
 
     //compute dh
     dim3 NumBlocks2((batch_size + BlockSize_2d.x -1)/BlockSize_2d.x, 
@@ -170,6 +178,7 @@ void MLP::backward(float *x, float *probs, int * labels){
     //compute db1
     sum_batch<<<(hidden + BlockSize_lin -1)/BlockSize_lin,BlockSize_lin>>>
         (dh_pre, hidden, batch_size, db1);
+    cudaDeviceSynchronize();
 
     //batch averaging and multiply with learning rate
     scale<<<(hidden*input + BlockSize_lin -1)/BlockSize_lin, BlockSize_lin>>>
@@ -189,10 +198,7 @@ void MLP::backward(float *x, float *probs, int * labels){
     cudaDeviceSynchronize();
 
     //Mini-Batch GD
-    // W1[i] -= lr*dW1[i];
-    // W2[i] -= lr*dW2[i];
-    // b1[i] -= lr*db1[i];
-    // b2[i] -= lr*db2[i];
+    // Weight[i] -= lr*weight[i];
     add<<<(hidden*input + BlockSize_lin -1)/BlockSize_lin, BlockSize_lin>>>
         (W1, hidden*input, dW1);
     cudaDeviceSynchronize();
@@ -208,6 +214,10 @@ void MLP::backward(float *x, float *probs, int * labels){
     add<<<(output + BlockSize_lin -1)/BlockSize_lin, BlockSize_lin>>>
         (b2, output, db2);
     cudaDeviceSynchronize();
+}
+
+void MLP::train(float* images, int* labels, int num_samples, int num_epochs, float lr){
+
 }
 
 //kept cpu functions as speed increase is negligible
@@ -227,7 +237,8 @@ float* MLP::softmax(float* logits){
 }
 
 float* MLP::softmax_batch(float* logits){
-    float* probs = (float*) malloc(output * batch_size * sizeof(float));
+    float* probs;
+    cudaMallocManaged(&probs, output * batch_size * sizeof(float));
 
     for(int b = 0; b < batch_size; b++)
     {
@@ -343,3 +354,9 @@ void compute_dlogits(int output, int batch_size, float *probs,
     if(idx < batch_size)
         dlogits[labels[idx]*batch_size + idx] -= 1.0f;
 }
+
+
+
+// now lets create a function train(float *x, int *labels, int num_epochs, bool print) so that training becomes simple. 
+
+// if print = true, print every 20 epochs

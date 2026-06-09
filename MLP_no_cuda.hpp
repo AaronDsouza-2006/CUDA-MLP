@@ -26,7 +26,7 @@ private:
         float *W1, *W2; //weights
         float *b1, *b2; //biases
         float *h_pre, *h, *logits;
-        float lr = 0.03f;
+        float lr = 0.05f;
 
         void initializeWeights();
         void bc_add(float* mat, float* vec, int rows, int cols);

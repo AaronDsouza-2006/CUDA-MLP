@@ -7,7 +7,7 @@ int main(){
     Dataset train =
         loadMNIST("data/mnist_train.csv");
 
-    const int batch_size = 32;
+    const int batch_size = 64;
 
     float* x =
         (float*)malloc(
@@ -44,7 +44,7 @@ int main(){
     );
     
     std::cout<<"MLP and batch created";
-    for(int epoch=0; epoch<1000; epoch++){
+    for(int epoch=0; epoch<2000; epoch++){
 
         mlp.forward(x);
 
