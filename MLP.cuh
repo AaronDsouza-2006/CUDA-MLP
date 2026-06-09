@@ -2,6 +2,7 @@
 #define MLP_CUH
 
 #include <cuda_runtime.h>
+#include <iostream>
 
 class MLP{
 public:
@@ -12,16 +13,15 @@ public:
 
     float* get_logits();
 
-    float* softmax(float* logits);
     float* softmax_batch(float* logits);
 
-    int argmax(float* values, int n);
-
-    float cross_entropy(float* probs, int label);
     float cross_entropy_batch(float* probs, int* labels);
-    void backward(float *x, float *probs, int * labels);
+    void backward(float *x, float *probs, int * labels, float lr);
     void train(float* images, int* labels, 
         int num_samples, int num_epochs, float lr);
+    float evaluate(float* images, int* labels, int num_samples);
+    void save_weights(const std::string& filename);
+    void load_weights(const std::string& filename);
 
 private:
         int input, hidden, output; //sizes

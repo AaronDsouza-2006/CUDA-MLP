@@ -7,6 +7,7 @@
 #include <vector>
 #include <algorithm>
 #include <random>
+#include <fstream>
 
 __global__
 void bc_add(float* mat, float* vec, int rows, int cols);
@@ -217,24 +218,143 @@ void MLP::backward(float *x, float *probs, int * labels, float lr){
 }
 
 void MLP::train(float* images, int* labels, int num_samples, int num_epochs, float lr){
+    
+    std::vector<int> indices(num_samples);
+    
+    for(int i=0; i<num_samples; i++) 
+        indices[i] =i;
+    
+    std::random_device rd;
+    std::mt19937 rng(rd());
+    
+    float *x_batch;
+    int *y_batch;
+    cudaMallocManaged(&x_batch, input * batch_size * sizeof(float));
+    cudaMallocManaged(&y_batch, batch_size * sizeof(int));
+    
+    for(int epoch=0; epoch<num_epochs; epoch++){
+        std::shuffle(indices.begin(), indices.end(), rng);
+        
+        for(int start = 0; start+batch_size <= num_samples; start +=batch_size){
 
+            for(int b=0; b<batch_size; b++){
+                int sample_idx = indices[start+b];
+                y_batch[b] = labels[sample_idx];
+                
+                for(int pixel = 0; pixel<input; pixel++){
+                    x_batch[pixel*batch_size + b] = 
+                        images[sample_idx*input + pixel];
+                }
+            }
+
+            cudaMemPrefetchAsync(x_batch, input*batch_size*sizeof(float), location, 0, 0);
+            cudaMemPrefetchAsync(y_batch, batch_size*sizeof(int), location, 0, 0);
+            cudaDeviceSynchronize();
+
+            forward(x_batch);
+
+            float* probs = softmax_batch(logits);
+
+            backward(x_batch, probs, y_batch, lr);
+            
+            //display loss at the last iteration
+            if(start+2*batch_size > num_samples){
+                float loss = cross_entropy_batch(probs, y_batch);
+                std::cout<< "Epoch " << epoch
+                    << " Loss: " << loss << std::endl;
+            }
+
+            cudaFree(probs);
+        }
+    }
+    cudaFree(x_batch);
+    cudaFree(y_batch);
+}
+
+
+float MLP::evaluate(float* images, int* labels, int num_samples){
+    std::cout<< "ready" << std::endl;
+    float* x_batch;
+    int* y_batch;
+
+    cudaMallocManaged(
+        &x_batch,
+        input * batch_size * sizeof(float)
+    );
+
+    cudaMallocManaged(
+        &y_batch,
+        batch_size * sizeof(int)
+    );
+
+    int device;
+    cudaGetDevice(&device);
+
+    int total_correct = 0;
+    int total_seen = 0;
+
+    for(
+        int start = 0;
+        start + batch_size <= num_samples;
+        start += batch_size
+    ){
+        // Build batch
+        for(int b=0; b<batch_size; b++){
+            int sample_idx = start + b;
+
+            y_batch[b] = labels[sample_idx];
+
+            for(int pixel=0; pixel<input; pixel++){
+                x_batch[pixel * batch_size + b]
+                    =
+                images[sample_idx * input + pixel];
+            }
+        }
+
+        cudaMemPrefetchAsync(x_batch, input*batch_size*sizeof(float), location, 0, 0);
+        cudaMemPrefetchAsync(y_batch, batch_size*sizeof(int), location, 0, 0);
+        cudaDeviceSynchronize();
+
+        cudaDeviceSynchronize();
+
+        forward(x_batch);
+
+        float* probs =
+            softmax_batch(logits);
+
+        for(int b=0; b<batch_size; b++){
+            int pred = 0;
+
+            for(int c=1; c<output; c++){
+                if(
+                    probs[c * batch_size + b]
+                    >
+                    probs[pred * batch_size + b]
+                ){
+                    pred = c;
+                }
+            }
+
+            if(pred == y_batch[b])
+                total_correct++;
+
+            total_seen++;
+        }
+
+        cudaFree(probs);
+    }
+
+    cudaFree(x_batch);
+    cudaFree(y_batch);
+
+    return
+        100.0f *
+        total_correct /
+        total_seen;
 }
 
 //kept cpu functions as speed increase is negligible
-float* MLP::softmax(float* logits){
-    int max_val_idx = argmax(logits, output);
-    float sum = 0, *probs;
-    probs = (float*) malloc(output*sizeof(float));
 
-    for(int i=0; i<output; i++){
-        probs[i] = std::exp(logits[i]-logits[max_val_idx]);
-        sum += probs[i];
-    }
-
-    for(int i=0; i<output; i++) probs[i]/=sum;
-
-    return probs;
-}
 
 float* MLP::softmax_batch(float* logits){
     float* probs;
@@ -267,18 +387,6 @@ float* MLP::softmax_batch(float* logits){
     return probs;
 }
 
-int MLP::argmax(float* values, int n){
-    int max_val_idx = 0;
-    for(int i=1; i<n; i++)
-        if (values[i] > values[max_val_idx]) max_val_idx = i;
-    
-    return max_val_idx;
-}
-
-float MLP::cross_entropy(float* probs, int label){
-    return -std::log(probs[label] + 1e-8f);
-}
-
 float MLP::cross_entropy_batch(float* probs, int* labels){
     float loss = 0;
 
@@ -289,6 +397,69 @@ float MLP::cross_entropy_batch(float* probs, int* labels){
     }
 
     return loss / batch_size;
+}
+
+void MLP::save_weights(const std::string& filename){
+
+    std::ofstream file(filename, std::ios::binary);
+
+    if(!file){
+        std::cerr<< "Failed to open " << filename << std::endl;
+        return;
+    }
+
+    file.write(
+        reinterpret_cast<char*>(W1),
+        hidden * input * sizeof(float)
+    );
+
+    file.write(
+        reinterpret_cast<char*>(b1),
+        hidden * sizeof(float)
+    );
+
+    file.write(
+        reinterpret_cast<char*>(W2),
+        output * hidden * sizeof(float)
+    );
+
+    file.write(
+        reinterpret_cast<char*>(b2),
+        output * sizeof(float)
+    );
+
+    file.close();
+}
+
+void MLP::load_weights(const std::string& filename){
+    std::ifstream file(filename, std::ios::binary);
+
+    if(!file){
+        std::cerr<< "Failed to open " << filename << std::endl;
+        return;
+    }
+
+    file.read(
+        reinterpret_cast<char*>(W1),
+        hidden * input * sizeof(float)
+    );
+
+    file.read(
+        reinterpret_cast<char*>(b1),
+        hidden * sizeof(float)
+    );
+
+    file.read(
+        reinterpret_cast<char*>(W2),
+        output * hidden * sizeof(float)
+    );
+
+    file.read(
+        reinterpret_cast<char*>(b2),
+        output * sizeof(float)
+    );
+
+    file.close();
 }
 
 void MLP::initializeWeights(){
@@ -354,9 +525,3 @@ void compute_dlogits(int output, int batch_size, float *probs,
     if(idx < batch_size)
         dlogits[labels[idx]*batch_size + idx] -= 1.0f;
 }
-
-
-
-// now lets create a function train(float *x, int *labels, int num_epochs, bool print) so that training becomes simple. 
-
-// if print = true, print every 20 epochs

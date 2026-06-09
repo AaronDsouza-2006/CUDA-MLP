@@ -9,108 +9,47 @@ int main()
     Dataset train =
         loadMNIST("data/mnist_train.csv");
 
-    std::cout
-        << "Loaded "
-        << train.num_samples
-        << " samples\n";
-
-    const int batch_size = 512;
+    std::cout<<"ready"<<std::endl;
 
     MLP mlp(
         784,
         128,
         10,
-        batch_size
+        512
+    );
+
+    mlp.train(
+        train.images.data(),
+        train.labels.data(),
+        train.num_samples,
+        10,
+        0.03f
     );
     
+    mlp.save_weights("mnist_model.bin");
 
-    float* x;
-    int * labels;
-
-    cudaMallocManaged(
-        &x,
-        784 * batch_size * sizeof(float)
+    Dataset test =
+        loadMNIST("data/mnist_test.csv");
+    
+    MLP model(
+        784,
+        128,
+        10,
+        512
     );
 
-    cudaMallocManaged(
-        &labels,
-        batch_size*sizeof(int)
+    model.load_weights(
+        "mnist_model.bin"
     );
+    float accuracy = model.evaluate(
+                        test.images.data(),
+                        test.labels.data(),
+                        test.num_samples
+                    );
 
-    // Build batch in
-    // input × batch format
-
-    for(int b = 0; b < batch_size; b++)
-    {
-        labels[b] = train.labels[b];
-        for(int pixel = 0; pixel < 784; pixel++)
-        {
-            x[pixel * batch_size + b]
-                = train.images[b * 784 + pixel];
-        }
-    }
-
-    int device;
-    cudaMemLocation location{};
-
-    cudaGetDevice(&device);
-
-    location.type =
-        cudaMemLocationTypeDevice;
-
-    location.id = device;
-
-    cudaMemPrefetchAsync(
-        x,
-        784 * batch_size * sizeof(float),
-        location,
-        0,
-        0
-    );
-
-    std::cout << "ready" << std::endl;
-
-    cudaDeviceSynchronize();
-
-    //--------------------------------------------------
-    // Forward pass timing
-    //--------------------------------------------------
-
-    float *probs;
-    float loss;
-    for(int epoch=0; epoch< 2000; epoch++){
-        mlp.forward(x);
-        probs = mlp.softmax_batch(mlp.get_logits());
-        loss = mlp.cross_entropy_batch(probs, labels);
-        if(epoch % 20 == 0)
-            std::cout<< "Epoch "<< epoch << 
-                " Loss: "<< loss<< std::endl;
-        mlp.backward(x, probs, labels);
-        cudaFree(probs);
-    }
-
-    int correct = 0;
-
-    for(int b=0; b<batch_size; b++){
-
-        int pred = 0;
-
-        for(int c=1; c<10; c++)
-            if(probs[c*batch_size + b]
-                >
-            probs[pred*batch_size + b])
-                pred = c;
-
-        if(pred == labels[b])
-            correct++;
-    }
-
-    std::cout<< " Loss: " << loss
-    << " Acc: " << 100.0f* correct/batch_size
+    std::cout
+    << "Train Accuracy: "
+    << accuracy
+    << "%"
     << std::endl;
-
-    cudaFree(x);
-    cudaFree(labels);
-
-    return 0;
 }
