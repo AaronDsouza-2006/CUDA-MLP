@@ -33,15 +33,13 @@ int main()
         batch_size
     );
 
-    //--------------------------------------------------
     // Train
-    //--------------------------------------------------
 
     mlp.train(
         train.images.data(),
         train.labels.data(),
         train.num_samples,
-        20,         // epochs
+        100,         // epochs
         0.08f       // learning rate
     );
 

@@ -2,6 +2,10 @@
 #include <random>
 #include <cstdlib>
 #include <cmath>
+#include <vector>
+#include <algorithm>
+#include <random>
+#include <fstream>
 
 MLP_no_cuda::MLP_no_cuda(int input_size, int hidden_size, int output_size, int input_batch_size){
     input = input_size;
@@ -107,7 +111,7 @@ float MLP_no_cuda::cross_entropy_batch(float* probs, int* labels){
     return loss / batch_size;
 }
 
-void MLP_no_cuda::backward(float* x, float* probs, int* labels){
+void MLP_no_cuda::backward(float* x, float* probs, int* labels, float lr){
     float *dlogits = (float*) malloc(output * batch_size * sizeof(float));
     float *dW2 = (float*) malloc(output * hidden * sizeof(float));
     float *db2 = (float*) malloc(output * sizeof(float));
@@ -163,6 +167,182 @@ void MLP_no_cuda::backward(float* x, float* probs, int* labels){
 
 float* MLP_no_cuda::get_logits(){
     return logits;
+}
+
+
+void MLP_no_cuda::train(float* images, int* labels, int num_samples, int num_epochs, float lr){
+    
+    std::vector<int> indices(num_samples);
+    
+    for(int i=0; i<num_samples; i++) 
+        indices[i] =i;
+    
+    std::random_device rd;
+    std::mt19937 rng(rd());
+    
+    float *x_batch = (float*) malloc(input * batch_size * sizeof(float));;
+    int *y_batch = (int*) malloc(batch_size * sizeof(int));;
+    
+    for(int epoch=0; epoch<num_epochs; epoch++){
+        std::shuffle(indices.begin(), indices.end(), rng);
+        
+        for(int start = 0; start+batch_size <= num_samples; start +=batch_size){
+
+            for(int b=0; b<batch_size; b++){
+                int sample_idx = indices[start+b];
+                y_batch[b] = labels[sample_idx];
+                
+                for(int pixel = 0; pixel<input; pixel++){
+                    x_batch[pixel*batch_size + b] = 
+                        images[sample_idx*input + pixel];
+                }
+            }
+
+            forward(x_batch);
+
+            float* probs = softmax_batch(logits);
+
+            backward(x_batch, probs, y_batch, lr);
+            
+            //display loss at the last iteration
+            if(start+2*batch_size > num_samples){
+                float loss = cross_entropy_batch(probs, y_batch);
+                std::cout<< "Epoch " << epoch
+                    << " Loss: " << loss << std::endl;
+            }
+
+            free(probs);
+        }
+    }
+    free(x_batch);
+    free(y_batch);
+}
+
+
+float MLP_no_cuda::evaluate(float* images, int* labels, int num_samples){
+    std::cout<< "ready" << std::endl;
+
+    float *x_batch = (float*) malloc(input * batch_size * sizeof(float));;
+    int *y_batch = (int*) malloc(batch_size * sizeof(int));;
+
+    int total_correct = 0;
+    int total_seen = 0;
+
+    for(
+        int start = 0;
+        start + batch_size <= num_samples;
+        start += batch_size
+    ){
+        // Build batch
+        for(int b=0; b<batch_size; b++){
+            int sample_idx = start + b;
+
+            y_batch[b] = labels[sample_idx];
+
+            for(int pixel=0; pixel<input; pixel++){
+                x_batch[pixel * batch_size + b]
+                    =
+                images[sample_idx * input + pixel];
+            }
+        }
+
+        forward(x_batch);
+
+        float* probs = softmax_batch(logits);
+
+        for(int b=0; b<batch_size; b++){
+            int pred = 0;
+
+            for(int c=1; c<output; c++){
+                if(
+                    probs[c * batch_size + b]
+                    >
+                    probs[pred * batch_size + b]
+                ){
+                    pred = c;
+                }
+            }
+
+            if(pred == y_batch[b])
+                total_correct++;
+
+            total_seen++;
+        }
+
+        free(probs);
+    }
+
+    free(x_batch);
+    free(y_batch);
+
+    return
+        100.0f *
+        total_correct /
+        total_seen;
+}
+
+
+void MLP_no_cuda::save_weights(const std::string& filename){
+
+    std::ofstream file(filename, std::ios::binary);
+
+    if(!file){
+        std::cerr<< "Failed to open " << filename << std::endl;
+        return;
+    }
+
+    file.write(
+        reinterpret_cast<char*>(W1),
+        hidden * input * sizeof(float)
+    );
+
+    file.write(
+        reinterpret_cast<char*>(b1),
+        hidden * sizeof(float)
+    );
+
+    file.write(
+        reinterpret_cast<char*>(W2),
+        output * hidden * sizeof(float)
+    );
+
+    file.write(
+        reinterpret_cast<char*>(b2),
+        output * sizeof(float)
+    );
+
+    file.close();
+}
+
+void MLP_no_cuda::load_weights(const std::string& filename){
+    std::ifstream file(filename, std::ios::binary);
+
+    if(!file){
+        std::cerr<< "Failed to open " << filename << std::endl;
+        return;
+    }
+
+    file.read(
+        reinterpret_cast<char*>(W1),
+        hidden * input * sizeof(float)
+    );
+
+    file.read(
+        reinterpret_cast<char*>(b1),
+        hidden * sizeof(float)
+    );
+
+    file.read(
+        reinterpret_cast<char*>(W2),
+        output * hidden * sizeof(float)
+    );
+
+    file.read(
+        reinterpret_cast<char*>(b2),
+        output * sizeof(float)
+    );
+
+    file.close();
 }
 
 void MLP_no_cuda::initializeWeights(){

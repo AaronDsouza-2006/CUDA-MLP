@@ -56,6 +56,7 @@ MLP::MLP(int input_size, int hidden_size, int output_size, int input_batch_size)
 
     initializeWeights();
 
+    int device;
     cudaGetDevice(&device);
     location.type = cudaMemLocationTypeDevice;
     location.id = device;
@@ -287,9 +288,6 @@ float MLP::evaluate(float* images, int* labels, int num_samples){
         batch_size * sizeof(int)
     );
 
-    int device;
-    cudaGetDevice(&device);
-
     int total_correct = 0;
     int total_seen = 0;
 
@@ -313,8 +311,6 @@ float MLP::evaluate(float* images, int* labels, int num_samples){
 
         cudaMemPrefetchAsync(x_batch, input*batch_size*sizeof(float), location, 0, 0);
         cudaMemPrefetchAsync(y_batch, batch_size*sizeof(int), location, 0, 0);
-        cudaDeviceSynchronize();
-
         cudaDeviceSynchronize();
 
         forward(x_batch);
@@ -352,9 +348,6 @@ float MLP::evaluate(float* images, int* labels, int num_samples){
         total_correct /
         total_seen;
 }
-
-//kept cpu functions as speed increase is negligible
-
 
 float* MLP::softmax_batch(float* logits){
     float* probs;

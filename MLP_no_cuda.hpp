@@ -1,5 +1,6 @@
 #ifndef MLP_no_cuda_CUH
 #define MLP_no_cuda_CUH
+#include <iostream>
 
 class MLP_no_cuda{
 public:
@@ -18,7 +19,16 @@ public:
     float cross_entropy(float* probs, int label);
     float cross_entropy_batch(float* probs, int* labels);
 
-    void backward(float *x, float *probs, int * labels);
+    void backward(float *x, float *probs, int * labels, float lr);
+
+    void train(float* images, int* labels, 
+        int num_samples, int num_epochs, float lr);
+
+    float evaluate(float* images, int* labels, int num_samples);
+
+    void save_weights(const std::string& filename);
+
+    void load_weights(const std::string& filename);
 
 private:
         int input, hidden, output; //sizes
@@ -26,7 +36,6 @@ private:
         float *W1, *W2; //weights
         float *b1, *b2; //biases
         float *h_pre, *h, *logits;
-        float lr = 0.05f;
 
         void initializeWeights();
         void bc_add(float* mat, float* vec, int rows, int cols);
