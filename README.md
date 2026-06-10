@@ -2,15 +2,15 @@
 
 A **from-scratch** implementation of a Multi-Layer Perceptron (MLP) neural network using **CUDA/C++** for high-performance GPU training. 
 
-This project demonstrates efficient custom CUDA kernels for matrix operations, forward & backward propagation, and is designed to be **general-purpose** — MNIST classification is provided only as an example.
+This project demonstrates efficient custom CUDA kernels for matrix operations, forward & backward propagation, and is implemented using MNIST classification as an example.
 
 ## Features
 
-- Fully CUDA-accelerated forward and backward passes
+- CUDA-accelerated forward and backward passes
+- 2-layers with one hidden layer.
 - Tiled matrix multiplication with shared memory for performance
 - ReLU activation + Softmax + Cross-Entropy loss
-- Mini-batch Stochastic Gradient Descent (SGD)
-- Unified Memory with prefetching
+- Mini-batch Gradient Descent
 - Model checkpointing
 - CPU reference implementation for validation
 
@@ -25,22 +25,20 @@ CUDA-MLP/
 ├── matmul.cuh          # Matrix mul headers
 ├── data_loader.cpp     # MNIST CSV loader (example only)
 ├── data_loader.hpp
-├── MNIST_example.cu    # Example: MNIST classification
+├── MNIST_example.cu    # MNIST Example classification
 ├── MNIST_example_cpu.cpp # CPU version of the example
 ├── MLP_no_cuda.cpp     # CPU-only MLP reference
 ├── MLP_no_cuda.hpp
-├── .gitignore
-└── data/               # Put your datasets here (e.g., mnist_train.csv)
 ```
 
 ## Building
 
 ```bash
 # CUDA version
-nvcc -o mlp_mnist MNIST_example.cu MLP.cu matmul.cu data_loader.cpp -O3 -arch=sm_70
+nvcc MNIST_example.cu MLP.cu matmul.cu data_loader.cpp -o mlp_mnist
 
 # CPU reference (for comparison)
-g++ -o mlp_mnist_cpu MNIST_example_cpu.cpp MLP_no_cuda.cpp data_loader.cpp -O3 -std=c++17
+g++ MNIST_example_cpu.cpp MLP_no_cuda.cpp data_loader.cpp -o mlp_mnist_cpu
 ```
 
 ## Usage
@@ -48,12 +46,11 @@ g++ -o mlp_mnist_cpu MNIST_example_cpu.cpp MLP_no_cuda.cpp data_loader.cpp -O3 -
 ### 1. MNIST Example (for quick testing)
 
 ```cpp
-const int batch_size = 512;
-MLP mlp(784, 128, 10, batch_size);   // input → hidden → output
+MLP mlp(input_size, hidden_size, output_size, batch_size);   
 
 mlp.train(train_images, train_labels, num_train_samples, epochs, lr);
 
-float accuracy = mlp.evaluate(test_images, test_labels, num_test_samples);
+accuracy = mlp.evaluate(test_images, test_labels, num_test_samples);
 ```
 
 ### 2. Using for Other Tasks
@@ -61,8 +58,8 @@ float accuracy = mlp.evaluate(test_images, test_labels, num_test_samples);
 You can easily adapt this MLP for **any classification or regression task**:
 
 1. Prepare your data as:
-   - `float* features` (flattened, row-major or column-major as per your loader)
-   - `int* labels` (for classification) or `float* targets` (for regression)
+   - `float* features` (flattened)
+   - `int* labels` 
 
 2. Create the model with appropriate dimensions:
    ```cpp
